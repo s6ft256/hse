@@ -2,17 +2,94 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, minimum-scale=1.0, viewport-fit=cover">
+  <!--<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, minimum-scale=1.0, viewport-fit=cover">-->
   <title>Enhanced HSE Inspection Report System</title>
+  
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👷</text></svg>">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+  
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
+
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Roboto:wght@300;400;500&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
+    // Firebase configuration
+    const firebaseConfig = {
+      apiKey: "AIzaSyBWTp1MM5ADIAa-2MLfxxuNfOvQ4lhvqFY",
+      authDomain: "hse-web-50021.firebaseapp.com",
+      projectId: "hse-web-50021",
+      storageBucket: "hse-web-50021.appspot.com",
+      messagingSenderId: "793301108173",
+      appId: "1:793301108173:web:3c5b54ca2bc86cc6797084"
+    };
+
+    // Initialize Firebase
+    const app = firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const auth = firebase.auth();
+    const storage = firebase.storage();
+    
     // User state
     let currentUser = null;
     
+    // Modify form submission
+    document.addEventListener('DOMContentLoaded', function() {
+      document.getElementById('hseForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      
+      const inspectionData = {
+        location: document.getElementById('location').value.trim(),
+        date: document.getElementById('date').value,
+        risk: document.getElementById('risk').value,
+        responsible: document.getElementById('responsible').value,
+        inspector: document.getElementById('inspector').value,
+        observation: document.getElementById('observation').value.trim(),
+        actionTaken: document.getElementById('actionTaken').value.trim(),
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+        assessor: currentUser || {}
+      };
+    
+      // Process file uploads if any - using Base64 encoding
+      const photoFiles = document.getElementById('photo').files;
+      if (photoFiles.length > 0) {
+        // Show uploading status
+        const submitButton = document.querySelector('#hseForm button[type="submit"]');
+        const originalText = submitButton.innerHTML;
+        submitButton.innerHTML = '<i class="bi bi-arrow-repeat me-2"></i>Processing Images...';
+        submitButton.disabled = true;
+        
+        try {
+          // Use new helpers:
+          const photoData = await processPhotos(photoFiles);
+          inspectionData.photos = photoData;
+          await db.collection('inspections').add(inspectionData);
+          alert('Report submitted with photos successfully!');
+          this.reset();
+        } catch (error) {
+          console.error("Error submitting report with photos: ", error);
+          alert('Error submitting report: ' + error.message);
+        } finally {
+          // Reset button state
+          submitButton.innerHTML = originalText;
+          submitButton.disabled = false;
+        }
+      } else {
+        db.collection('inspections').add(inspectionData)
+          .then(() => {
+            alert('Report submitted successfully!');
+            this.reset();
+          })
+          .catch(error => {
+            console.error("Error submitting report: ", error);
+            alert('Error submitting report: ' + error.message);
+          });
+      }
+    });
+  });
     // Update user profile in sidebar
     function updateUserProfile(user) {
       const userProfile = document.getElementById('userProfile');
@@ -20,7 +97,12 @@
       const userName = document.getElementById('userName');
       
       if (user) {
-        userAvatar.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%236c757d"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>';
+        // Check if the user name contains 'elius' (case-insensitive) to use custom avatar
+        if (user.name && user.name.toLowerCase().includes('elius')) {
+          userAvatar.src = 'Elius.jpg';
+        } else {
+          userAvatar.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%236c757d"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>';
+        }
         userName.textContent = user.name || 'User';
         userProfile.style.display = 'flex';
       } else {
@@ -36,67 +118,164 @@
       });
     }
     
-    // Sign out function
+    // Advanced Sign out function with instant feedback
     function signOut() {
-      // Clear user data
-      localStorage.removeItem('assessorData');
-      currentUser = null;
-      
-      // Reset UI
-      document.getElementById('authContainer').style.display = 'block';
-      document.getElementById('assessorManagement').style.display = 'none';
-      document.getElementById('assessorForm').reset();
-      updateUserProfile(null);
-      
-      // Disable all tabs except Assessor
-      const tabs = document.querySelectorAll('.nav-link:not(#assessor-tab)');
-      tabs.forEach(tab => {
-        if (!tab.classList.contains('tab-disabled')) {
-          tab.classList.add('tab-disabled');
+      const logoutBtn = document.querySelector('.logout-btn');
+      if (logoutBtn) {
+        logoutBtn.disabled = true;
+        logoutBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>`;
+      }
+
+      auth.signOut().then(() => {
+        // This code runs after successful sign-out from Firebase
+        console.log('User signed out successfully from Firebase');
+
+        // Clear user data
+        localStorage.removeItem('assessorData');
+        currentUser = null;
+
+        // Reset UI
+        document.getElementById('authContainer').style.display = 'block';
+        document.getElementById('assessorManagement').style.display = 'none';
+        const assessorForm = document.getElementById('assessorForm');
+        if (assessorForm) {
+          assessorForm.reset();
         }
+        updateUserProfile(null);
+
+        // Disable all tabs
+        const tabs = document.querySelectorAll('.nav-link:not(#assessor-tab)');
+        tabs.forEach(tab => tab.classList.add('tab-disabled'));
+
+        // Switch to Assessor tab
+        const assessorTab = new bootstrap.Tab(document.getElementById('assessor-tab'));
+        assessorTab.show();
+
+        // Show confirmation and reset button
+        const logoutToast = new bootstrap.Toast(document.getElementById('logoutToast'));
+        logoutToast.show();
+        if (logoutBtn) {
+          logoutBtn.disabled = false;
+          logoutBtn.innerHTML = 'Logout';
+        }
+      }).catch((error) => {
+        console.error('Sign out error:', error);
+        // Re-enable button on error
+        if (logoutBtn) {
+          logoutBtn.disabled = false;
+          logoutBtn.innerHTML = 'Logout';
+        }
+        alert('Failed to log out. Please try again.');
       });
-      
-      // Switch back to Assessor tab
-      const assessorTab = document.getElementById('assessor-tab');
-      const tab = new bootstrap.Tab(assessorTab);
-      tab.show();
+    }
+    
+    // Convert file to Base64
+    function convertToBase64(file) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(file);
+      });
+    }
+    
+    // New photo processing functions
+    async function processPhotos(files) {
+      return await Promise.all(
+        Array.from(files).map(async (file) => {
+          const base64 = await fileToBase64(file);
+          return {
+            name: file.name,
+            url: base64,  // This will work permanently
+            size: (file.size / (1024 * 1024)).toFixed(2) + 'MB'
+          };
+        })
+      );
+    }
+
+    function fileToBase64(file) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(file);
+      });
     }
     
     // Save assessor information
-    function saveAssessorInfo() {
-      const assessorName = document.getElementById('assessorName').value.trim();
-      const assessorId = document.getElementById('assessorId').value.trim();
-      const department = document.getElementById('department').value;
-      const certification = document.getElementById('certification').value;
-      
-      if (!assessorName || !assessorId || !department || !certification) {
-        alert('Please fill in all required fields');
-        return;
+    async function saveAssessorInfo() {
+      try {
+        const assessorName = document.getElementById('assessorName').value.trim();
+        const assessorId = document.getElementById('assessorId').value.trim();
+
+        // Validate required fields
+        if (!assessorName || !assessorId) {
+          alert('Assessor Name and Assessor ID are required to continue.');
+          return; // Stop the function if validation fails
+        }
+
+        // Ensure we have an authenticated user
+        if (!auth.currentUser) {
+          throw new Error("Please wait while we authenticate you...");
+        }
+
+        const assessorData = {
+          name: document.getElementById('assessorName').value.trim(),
+          assessorId: document.getElementById('assessorId').value.trim(), // Save manual ID
+          uid: auth.currentUser.uid, // Save Firebase UID
+          department: document.getElementById('department').value,
+          certification: document.getElementById('certification').value,
+          timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        };
+
+        // Save to Firestore
+        await db.collection('assessors').doc(auth.currentUser.uid).set(assessorData);
+        
+        // Update UI
+        currentUser = assessorData;
+        updateUserProfile(currentUser);
+        enableAllTabs();
+        updateInspectorDropdown(assessorData.name); // Use latest saved name
+        alert('Profile saved successfully!');
+        
+      } catch (error) {
+        console.error("Save error:", error);
+        alert(`Error: ${error.message}. Please try again.`);
       }
-      
-      // Save assessor data
-      const assessorData = {
-        name: assessorName,
-        id: assessorId,
-        department: department,
-        certification: certification
-      };
-      
-      localStorage.setItem('assessorData', JSON.stringify(assessorData));
-      currentUser = { ...assessorData };
-      
-      // Update UI
-      document.getElementById('authContainer').style.display = 'none';
-      document.getElementById('assessorManagement').style.display = 'block';
-      updateUserProfile(assessorData);
-      enableAllTabs();
-      
-      // Update inspector dropdown in the inspection form
-      updateInspectorDropdown(assessorName);
-      
-      alert('Assessor information saved successfully!');
     }
     
+    // Load and display observations from Firestore in real-time
+    function loadObservations() {
+      const observationsList = document.getElementById('observationsList');
+      db.collection('inspections').orderBy('timestamp', 'desc').onSnapshot(snapshot => {
+        observationsList.innerHTML = '';
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          const card = document.createElement('div');
+          card.className = 'col-md-6';
+          card.innerHTML = `
+            <div class="observation-card card">
+              <div class="card-body">
+                <h5 class="card-title">${data.location || 'No Location'}</h5>
+                <p class="card-text">${data.observation || ''}</p>
+                <small class="text-muted">${data.date || ''}</small>
+              </div>
+            </div>
+          `;
+          observationsList.appendChild(card);
+        });
+        if (snapshot.empty) {
+          observationsList.innerHTML = '<div class="alert alert-info">No observations found.</div>';
+        }
+      }, error => {
+        console.error('Error loading observations:', error);
+        observationsList.innerHTML = '<div class="alert alert-danger">Failed to load observations.</div>';
+      });
+    }
+
+    // Call loadObservations once during initialization
+    document.addEventListener('DOMContentLoaded', function() {
+      loadObservations();
+    });
+
     // Update inspector dropdown with the current assessor's name
     function updateInspectorDropdown(assessorName) {
       const inspectorSelect = document.getElementById('inspector');
@@ -109,6 +288,16 @@
         // Add the assessor's name as an option and select it
         const option = new Option(assessorName, assessorName, false, true);
         inspectorSelect.add(option);
+      }
+    }
+    
+    // Check if user has an assessor profile
+    async function checkAssessorProfile(uid) {
+      const doc = await db.collection('assessors').doc(uid).get();
+      if (doc.exists) {
+        currentUser = { ...doc.data(), id: uid };
+        updateUserProfile(currentUser);
+        enableAllTabs();
       }
     }
     
@@ -133,7 +322,33 @@
         dateField.value = new Date().toISOString().split('T')[0];
       }
       
+      // Add event listener for save assessor button
+      document.getElementById('saveAssessorBtn').addEventListener('click', async () => {
+        // Show loading state
+        const btn = document.getElementById('saveAssessorBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Saving...';
+        
+        await saveAssessorInfo();
+        
+        // Reset button state
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-circle me-2"></i>Save & Continue';
+      });
+      
       // Initialize other components...
+    });
+    
+    // Add Firebase Auth state listener
+    auth.onAuthStateChanged((user) => {
+      if (user) {
+        // User is signed in
+        currentUser = user;
+        checkAssessorProfile(user.uid);
+      } else {
+        // No user signed in
+        auth.signInAnonymously().catch(console.error);
+      }
     });
   </script>
   <style>
@@ -1028,9 +1243,9 @@
                   </select>
                 </div>
                 <div class="col-12">
-                  <button type="button" class="btn btn-success w-100" onclick="saveAssessorInfo()">
+                  <button id="saveAssessorBtn" class="btn btn-success w-100">
                     <i class="bi bi-check-circle me-2"></i>Save & Continue
-                  </button>
+                  </button> 
                 </div>
               </div>
             </div>
@@ -1079,6 +1294,10 @@
                 <div class="col-12">
                   <label for="observation" class="form-label">Observation</label>
                   <textarea class="form-control" id="observation" placeholder="Describe your observation in detail..." required></textarea>
+                </div>
+                <div class="col-12">
+                  <label for="actionTaken" class="form-label">Action Taken</label>
+                  <textarea class="form-control" id="actionTaken" placeholder="Describe the corrective action taken or planned..." rows="3"></textarea>
                 </div>
                 <div class="col-12">
                   <label for="photo" class="form-label">Upload Photo</label>
@@ -1151,7 +1370,7 @@
                     <i class="bi bi-file-earmark-slides text-primary" style="font-size: 2.5rem;"></i>
                     <h5 class="card-title mt-3">My Slides</h5>
                     <a href="https://drive.google.com/drive/folders/1-vAprXj8w3IRDTFlJCxpw7ToXw6JBJ46?usp=sharing" 
-                       class="stretched-link" target="_blank"></a>
+                      class="stretched-link" target="_blank"></a>
                   </div>
                 </div>
               </div>
@@ -1161,7 +1380,7 @@
                     <i class="bi bi-crane text-primary" style="font-size: 2.5rem;"></i>
                     <h5 class="card-title mt-3">Lifting Documents</h5>
                     <a href="https://drive.google.com/drive/folders/16Q6tteBqG-PpqHms8JO37r0swvu1X8vX?usp=sharing" 
-                       class="stretched-link" target="_blank"></a>
+                      class="stretched-link" target="_blank"></a>
                   </div>
                 </div>
               </div>
@@ -1171,7 +1390,7 @@
                     <i class="bi bi-shield-check text-primary" style="font-size: 2.5rem;"></i>
                     <h5 class="card-title mt-3">Safety Concerns</h5>
                     <a href="https://drive.google.com/drive/folders/1COg6s8vb-e6ZXM__Zgd55qHZtP1m5fAV?usp=sharing" 
-                       class="stretched-link" target="_blank"></a>
+                      class="stretched-link" target="_blank"></a>
                   </div>
                 </div>
               </div>
@@ -1181,7 +1400,7 @@
                     <i class="bi bi-gear text-primary" style="font-size: 2.5rem;"></i>
                     <h5 class="card-title mt-3">Plant Equipment</h5>
                     <a href="https://drive.google.com/drive/folders/1Kc_Gv7B9qYdODP-iHMZWETbtXSNPByDe?usp=sharing" 
-                       class="stretched-link" target="_blank"></a>
+                      class="stretched-link" target="_blank"></a>
                   </div>
                 </div>
               </div>
@@ -1193,7 +1412,7 @@
             <div class="plant-equipment-header">
               <h2><i class="bi bi-tools me-2"></i>Plant & Equipment Management</h2>
               <a href="https://docs.google.com/spreadsheets/d/1lsrJyzX-57JSUTn258ELYLT15-N8t5OS/edit?usp=sharing" 
-                 class="btn btn-outline-primary" target="_blank">
+                class="btn btn-outline-primary" target="_blank">
                 <i class="bi bi-box-arrow-up-right me-1"></i>Open in Sheets
               </a>
             </div>
@@ -1204,7 +1423,7 @@
             
             <div class="equipment-stats">
               <div class="stat-card">
-                <div class="stat-value">95</div>
+                <div class="stat-value">59</div>
                 <div class="stat-label">Total Equipment</div>
               </div>
               <div class="stat-card">
@@ -1245,8 +1464,8 @@
                   <h3>Plant Equipment Overview</h3>
                   <div class="equipment-grid">
                     <div class="equipment-item">
-                      <div class="equipment-icon">
-                        <i class="bi bi-crane"></i>
+                      <div class="equipment-image mb-3">
+                        <img src="crane.jpg" alt="Mobile Crane" class="img-fluid rounded" style="max-height: 150px; width: 100%; object-fit: cover;">
                       </div>
                       <h4>MOBILE CRANE</h4>
                       <div class="equipment-info">
@@ -1256,19 +1475,19 @@
                         </div>
                         <div class="info-item">
                           <span class="info-label">Last Inspection:</span>
-                          <span class="info-value">2023-10-15</span>
+                          <span class="info-value">17/1/2025</span>
                         </div>
                         <div class="info-item">
                           <span class="info-label">Next Due:</span>
-                          <span class="info-value">2024-01-15</span>
+                          <span class="info-value">16/1/2026</span>
                         </div>
                         <span class="status-badge status-active">Active</span>
                       </div>
                     </div>
                     
                     <div class="equipment-item">
-                      <div class="equipment-icon">
-                        <i class="bi bi-truck-flatbed"></i>
+                      <div class="equipment-image mb-3">
+                        <img src="skid.jpg" alt="Skid Steer Loader" class="img-fluid rounded" style="max-height: 150px; width: 100%; object-fit: cover;">
                       </div>
                       <h4>SKID STEER LOADER</h4>
                       <div class="equipment-info">
@@ -1278,11 +1497,11 @@
                         </div>
                         <div class="info-item">
                           <span class="info-label">Last Inspection:</span>
-                          <span class="info-value">2023-11-20</span>
+                          <span class="info-value">11/4/2025</span>
                         </div>
                         <div class="info-item">
                           <span class="info-label">Next Due:</span>
-                          <span class="info-value">2024-02-20</span>
+                          <span class="info-value">10/4/2026</span>
                         </div>
                         <span class="status-badge status-active">Active</span>
                       </div>
@@ -1290,7 +1509,7 @@
                     
                     <div class="equipment-item">
                       <div class="equipment-icon">
-                        <i class="bi bi-cone-striped"></i>
+                        <img src="wheel.jpg" alt="Wheel Loader" class="img-fluid rounded" style="max-height: 80px; object-fit: cover;">
                       </div>
                       <h4>WHEEL LOADER</h4>
                       <div class="equipment-info">
@@ -1300,13 +1519,13 @@
                         </div>
                         <div class="info-item">
                           <span class="info-label">Last Inspection:</span>
-                          <span class="info-value">2023-09-10</span>
+                          <span class="info-value">29/5/2025</span>
                         </div>
                         <div class="info-item">
                           <span class="info-label">Next Due:</span>
-                          <span class="info-value">2023-12-10</span>
+                          <span class="info-value">28/5/2026</span>
                         </div>
-                        <span class="status-badge status-maintenance">Maintenance</span>
+                        <span class="status-badge status-maintenance">Maintenance- Required</span>
                       </div>
                     </div>
                   </div>
@@ -1322,7 +1541,7 @@
                   <div class="equipment-grid">
                     <div class="equipment-item">
                       <div class="equipment-icon">
-                        <i class="bi bi-lightning-charge"></i>
+                        <img src="kv.jpg" alt="Generator 500KVA" class="img-fluid rounded" style="max-height: 80px; object-fit: cover;">
                       </div>
                       <h4>GENERATOR 500KVA</h4>
                       <div class="equipment-info">
@@ -1332,11 +1551,11 @@
                         </div>
                         <div class="info-item">
                           <span class="info-label">Last Inspection:</span>
-                          <span class="info-value">2023-11-05</span>
+                          <span class="info-value">01/11/2025</span>
                         </div>
                         <div class="info-item">
                           <span class="info-label">Next Due:</span>
-                          <span class="info-value">2024-02-05</span>
+                          <span class="info-value">05/6/2026</span>
                         </div>
                         <span class="status-badge status-active">Active</span>
                       </div>
@@ -1344,7 +1563,7 @@
                     
                     <div class="equipment-item">
                       <div class="equipment-icon">
-                        <i class="bi bi-fan"></i>
+                        <img src="comp.jpg" alt="Air Compressor" class="img-fluid rounded" style="max-height: 80px; object-fit: cover;">
                       </div>
                       <h4>Air Compressor</h4>
                       <div class="equipment-info">
@@ -1354,11 +1573,11 @@
                         </div>
                         <div class="info-item">
                           <span class="info-label">Last Inspection:</span>
-                          <span class="info-value">2023-10-28</span>
+                          <span class="info-value">28/6/2025</span>
                         </div>
                         <div class="info-item">
                           <span class="info-label">Next Due:</span>
-                          <span class="info-value">2024-01-28</span>
+                          <span class="info-value">28/02/2026</span>
                         </div>
                         <span class="status-badge status-active">Active</span>
                       </div>
@@ -1366,7 +1585,7 @@
                     
                     <div class="equipment-item">
                       <div class="equipment-icon">
-                        <i class="bi bi-droplet"></i>
+                        <img src="water.webp" alt="Water Pump" class="img-fluid rounded" style="max-height: 80px; object-fit: cover;">
                       </div>
                       <h4>Water Pump</h4>
                       <div class="equipment-info">
@@ -1376,13 +1595,13 @@
                         </div>
                         <div class="info-item">
                           <span class="info-label">Last Inspection:</span>
-                          <span class="info-value">2023-11-15</span>
+                          <span class="info-value">15/3/2025</span>
                         </div>
                         <div class="info-item">
                           <span class="info-label">Next Due:</span>
-                          <span class="info-value">2024-02-15</span>
+                          <span class="info-value">15/12/2026</span>
                         </div>
-                        <span class="status-badge status-inactive">Inactive</span>
+                        <span class="status-badge status-active">Active</span>
                       </div>
                     </div>
                   </div>
@@ -1398,7 +1617,7 @@
                   <div class="equipment-grid">
                     <div class="equipment-item">
                       <div class="equipment-icon">
-                        <i class="bi bi-fire"></i>
+                        <img src="co2.jpg" alt="CO2 Extinguisher" class="img-fluid rounded" style="max-height: 80px; object-fit: cover;">
                       </div>
                       <h4>CO2 Extinguisher</h4>
                       <div class="equipment-info">
@@ -1412,7 +1631,7 @@
                         </div>
                         <div class="info-item">
                           <span class="info-label">Expiry:</span>
-                          <span class="info-value">2024-06-15</span>
+                          <span class="info-value">01/01/2026</span>
                         </div>
                         <span class="status-badge status-active">Active</span>
                       </div>
@@ -1420,7 +1639,7 @@
                     
                     <div class="equipment-item">
                       <div class="equipment-icon">
-                        <i class="bi bi-fire"></i>
+                        <img src="foam.png" alt="Foam Extinguisher" class="img-fluid rounded" style="max-height: 80px; object-fit: cover;">
                       </div>
                       <h4>Foam Extinguisher</h4>
                       <div class="equipment-info">
@@ -1430,11 +1649,11 @@
                         </div>
                         <div class="info-item">
                           <span class="info-label">Location:</span>
-                          <span class="info-value">Workshop</span>
+                          <span class="info-value">Diesel tank</span>
                         </div>
                         <div class="info-item">
                           <span class="info-label">Expiry:</span>
-                          <span class="info-value">2024-05-30</span>
+                          <span class="info-value">03/02/2026</span>
                         </div>
                         <span class="status-badge status-active">Active</span>
                       </div>
@@ -1442,7 +1661,7 @@
                     
                     <div class="equipment-item">
                       <div class="equipment-icon">
-                        <i class="bi bi-fire"></i>
+                        <img src="powder.webp" alt="Dry Powder Extinguisher" class="img-fluid rounded" style="max-height: 80px; object-fit: cover;">
                       </div>
                       <h4>Dry Powder Extinguisher</h4>
                       <div class="equipment-info">
@@ -1456,9 +1675,9 @@
                         </div>
                         <div class="info-item">
                           <span class="info-label">Expiry:</span>
-                          <span class="info-value">2023-12-10</span>
+                          <span class="info-value">10/12/2025</span>
                         </div>
-                        <span class="status-badge status-maintenance">Requires Service</span>
+                        <span class="status-badge status-active">Active</span>
                       </div>
                     </div>
                   </div>
@@ -1476,10 +1695,10 @@
           <div class="tab-pane fade" id="aboutme" role="tabpanel">
             <div class="text-center mb-5">
               <div class="profile-img">
-                <img src="El1.jpg" alt="Profile Photo" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">
+                <img src="Elius.jpg" alt="Profile Photo" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">
               </div>
               <h2>ELIUS D.A</h2>
-              <h5 class="text-muted">HSE Professional & Developer</h5>
+              <h5 class="text-muted">Pentester</h5>
               <div class="social-links">
                 <a href="https://wa.me/971552623327" class="btn btn-outline-success" target="_blank">
                   <i class="bi bi-whatsapp me-2"></i>WhatsApp
@@ -1505,7 +1724,7 @@
                       </li>
                       <li class="list-group-item d-flex align-items-center">
                         <i class="bi bi-check-circle-fill text-success me-2"></i>
-                        HSE Inspection Specialist
+                        Penetration & Testing
                       </li>
                       <li class="list-group-item d-flex align-items-center">
                         <i class="bi bi-check-circle-fill text-success me-2"></i>
@@ -1537,10 +1756,7 @@
                         <i class="bi bi-geo-alt-fill me-2 text-primary"></i>
                         Dubai, UAE
                       </li>
-                      <li class="list-group-item">
-                        <i class="bi bi-briefcase-fill me-2 text-primary"></i>
-                        HSE Professional since 2018
-                      </li>
+                      
                     </ul>
                   </div>
                 </div>
@@ -1734,22 +1950,23 @@
       // Note: Login form removed - using direct assessor management
       
       // Google Sheets Integration
-      async function saveToGoogleSheets(observation) {
-        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyPadf51ZIjbACU9_7xhyhbZkUu2IggVms7stHQI47eApEC12DLSNYn6kzBn70fsuna/exec';
+      async function saveToGoogleSheets(Inspections) {
+        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzhE2bW3HLWlHLlranpUBY_4W5SweLUKIgSlruuZggaKBhPspgiez5bhQ1woZHeVA/exec';
         
         try {
           // Prepare data for Google Sheets
           const rowData = [
-            new Date(observation.timestamp).toLocaleString(),
-            observation.date,
-            observation.inspector,
-            observation.location,
-            observation.risk,
-            observation.responsible,
-            observation.observation,
-            observation.photos.length,
-            observation.assessor?.name || 'Unknown',
-            observation.id
+            new Date(Inspections.timestamp).toLocaleString(),
+            Inspections.date,
+            Inspections.inspector,
+            Inspections.location,
+            Inspections.risk,
+            Inspections.responsible,
+            Inspections.observation,
+            Inspections.actionTaken || '',
+            Inspections.photos.length,
+            Inspections.assessor?.name || 'Unknown',
+            Inspections.id
           ];
           
           // Send data to Google Sheets via Apps Script
@@ -1861,6 +2078,7 @@
           responsible: document.getElementById('responsible').value,
           inspector: document.getElementById('inspector').value,
           observation: document.getElementById('observation').value.trim(),
+          actionTaken: document.getElementById('actionTaken').value.trim(),
           photos: photoFiles.map(f => ({ 
             name: f.name, 
             url: URL.createObjectURL(f),
@@ -1901,7 +2119,7 @@
         }
         
         // Convert to CSV
-        const headers = ['ID', 'Date', 'Location', 'Risk', 'Inspector', 'Responsible', 'Observation'];
+        const headers = ['ID', 'Date', 'Location', 'Risk', 'Inspector', 'Responsible', 'Observation', 'Action Taken'];
         const csvRows = [
           headers.join(','),
           ...observations.map(obs => 
@@ -1912,7 +2130,8 @@
               obs.risk,
               `"${obs.inspector}"`,
               `"${obs.responsible}"`,
-              `"${obs.observation.replace(/"/g, '""')}"`
+              `"${obs.observation.replace(/"/g, '""')}"`,
+              `"${(obs.actionTaken || '').replace(/"/g, '""')}"`
             ].join(',')
           )
         ];
@@ -1953,7 +2172,7 @@
                 <div class="d-flex align-items-center mb-3">
                   ${obs.assessor && obs.assessor.photoURL ? `
                     <img src="${obs.assessor.photoURL}" alt="Assessor" 
-                         class="rounded-circle me-3" style="width: 50px; height: 50px; object-fit: cover;">
+                        class="rounded-circle me-3" style="width: 50px; height: 50px; object-fit: cover;">
                   ` : '<div class="rounded-circle bg-secondary me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;"><i class="bi bi-person text-white"></i></div>'}
                   <div>
                     <h5 class="card-title mb-0">${obs.inspector}</h5>
@@ -2009,8 +2228,11 @@
                   </div>
                 ` : ''}
               </div>
-              <div class="card-footer bg-transparent border-top">
+              <div class="card-footer bg-transparent border-top d-flex justify-content-between align-items-center">
                 <small class="text-muted">Reported at ${formatTime(obs.timestamp)}</small>
+                <button class="btn btn-outline-danger btn-sm" onclick="deleteObservation(${obs.id})" title="Delete observation">
+                  <i class="bi bi-trash"></i>
+                </button>
               </div>
             </div>
           </div>
@@ -2184,5 +2406,16 @@
       }
     });
   </script>
+  <!-- Toast Container for Logout Notification -->
+  <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1100">
+    <div id="logoutToast" class="toast align-items-center text-bg-success border-0" role="alert" aria-live="assertive" aria-atomic="true">
+      <div class="d-flex">
+        <div class="toast-body">
+          You have been signed out successfully.
+        </div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>
